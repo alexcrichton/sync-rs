@@ -31,8 +31,10 @@ pub use rwlock::{RWLock, StaticRWLock, RWLOCK_INIT};
 pub use rwlock::ReadGuard as RWLockReadGuard;
 pub use rwlock::WriteGuard as RWLockWriteGuard;
 pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT};
+pub use one::{Once, ONCE_INIT};
 
 pub mod sys;
+mod one;
 
 mod mutex;
 mod condvar;
