@@ -26,7 +26,7 @@ use {StaticMutex, MUTEX_INIT};
 /// # Example
 ///
 /// ```rust
-/// use sync::one::{Once, ONCE_INIT};
+/// use sync::{Once, ONCE_INIT};
 ///
 /// static START: Once = ONCE_INIT;
 ///

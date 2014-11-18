@@ -57,7 +57,7 @@ pub struct StaticMutex {
 /// An RAII implementation of a "scoped lock" of a mutex. When this structure is
 /// dropped (falls out of scope), the lock will be unlocked.
 #[must_use]
-pub struct Guard<'a> {
+pub struct MutexGuard<'a> {
     lock: &'a sys::Mutex,
     marker: marker::NoSend,
 }
@@ -78,9 +78,9 @@ impl Mutex {
     /// the mutex. Upon returning, the task is the only task with the mutex
     /// held. An RAII guard is returned to allow scoped unlock of the lock. When
     /// the guard goes out of scope, the mutex will be unlocked.
-    pub fn lock(&self) -> Guard {
+    pub fn lock(&self) -> MutexGuard {
         unsafe { self.lock.lock() }
-        Guard::new(&*self.lock)
+        MutexGuard::new(&*self.lock)
     }
 
     /// Attempts to acquire this lock.
@@ -90,9 +90,9 @@ impl Mutex {
     /// guard is dropped.
     ///
     /// This function does not block.
-    pub fn try_lock<'a>(&'a self) -> Option<Guard<'a>> {
+    pub fn try_lock<'a>(&'a self) -> Option<MutexGuard<'a>> {
         if unsafe { self.lock.try_lock() } {
-            Some(Guard::new(&*self.lock))
+            Some(MutexGuard::new(&*self.lock))
         } else {
             None
         }
@@ -110,15 +110,15 @@ impl Drop for Mutex {
 
 impl StaticMutex {
     /// Acquires this lock, see `Mutex::lock`
-    pub fn lock(&'static self) -> Guard<'static> {
+    pub fn lock(&'static self) -> MutexGuard<'static> {
         unsafe { self.lock.lock() }
-        Guard::new(&self.lock)
+        MutexGuard::new(&self.lock)
     }
 
     /// Attempts to grab this lock, see `Mutex::try_lock`
-    pub fn try_lock(&'static self) -> Option<Guard<'static>> {
+    pub fn try_lock(&'static self) -> Option<MutexGuard<'static>> {
         if unsafe { self.lock.try_lock() } {
-            Some(Guard::new(&self.lock))
+            Some(MutexGuard::new(&self.lock))
         } else {
             None
         }
@@ -139,16 +139,16 @@ impl StaticMutex {
     }
 }
 
-pub fn guard_inner<'a>(guard: &Guard<'a>) -> &'a sys::Mutex { guard.lock }
+pub fn guard_inner<'a>(guard: &MutexGuard<'a>) -> &'a sys::Mutex { guard.lock }
 
-impl<'mutex> Guard<'mutex> {
-    fn new<'a>(lock: &'a sys::Mutex) -> Guard<'a> {
-        Guard { lock: lock, marker: marker::NoSend }
+impl<'mutex> MutexGuard<'mutex> {
+    fn new<'a>(lock: &'a sys::Mutex) -> MutexGuard<'a> {
+        MutexGuard { lock: lock, marker: marker::NoSend }
     }
 }
 
 #[unsafe_destructor]
-impl<'mutex> Drop for Guard<'mutex> {
+impl<'mutex> Drop for MutexGuard<'mutex> {
     fn drop(&mut self) {
         unsafe { self.lock.unlock(); }
     }

@@ -62,7 +62,7 @@ pub const RWLOCK_INIT: StaticRWLock = StaticRWLock {
 /// RAII structure used to release the shared read access of a lock when
 /// dropped.
 #[must_use]
-pub struct ReadGuard<'a> {
+pub struct RWLockReadGuard<'a> {
     lock: &'a sys::RWLock,
     marker: marker::NoSend,
 }
@@ -70,7 +70,7 @@ pub struct ReadGuard<'a> {
 /// RAII structure used to release the exclusive write access of a lock when
 /// dropped.
 #[must_use]
-pub struct WriteGuard<'a> {
+pub struct RWLockWriteGuard<'a> {
     lock: &'a sys::RWLock,
     marker: marker::NoSend,
 }
@@ -91,9 +91,9 @@ impl RWLock {
     /// Returns an RAII guard which will release this thread's shared access
     /// once it is dropped.
     #[inline]
-    pub fn read(&self) -> ReadGuard {
+    pub fn read(&self) -> RWLockReadGuard {
         unsafe { self.inner.read() }
-        ReadGuard::new(&*self.inner)
+        RWLockReadGuard::new(&*self.inner)
     }
 
     /// Attempt to acquire this lock with shared read access.
@@ -103,9 +103,9 @@ impl RWLock {
     /// release the shared access of this thread when dropped, or `None` if the
     /// access could not be granted.
     #[inline]
-    pub fn try_read(&self) -> Option<ReadGuard> {
+    pub fn try_read(&self) -> Option<RWLockReadGuard> {
         if unsafe { self.inner.try_read() } {
-            Some(ReadGuard::new(&*self.inner))
+            Some(RWLockReadGuard::new(&*self.inner))
         } else {
             None
         }
@@ -120,9 +120,9 @@ impl RWLock {
     /// Returns an RAII guard which will drop the write access of this rwlock
     /// when dropped.
     #[inline]
-    pub fn write(&self) -> WriteGuard {
+    pub fn write(&self) -> RWLockWriteGuard {
         unsafe { self.inner.write() }
-        WriteGuard::new(&*self.inner)
+        RWLockWriteGuard::new(&*self.inner)
     }
 
     /// Attempt to lock this rwlock with exclusive write access.
@@ -131,9 +131,9 @@ impl RWLock {
     /// to `write` would otherwise block. If successful, an RAII guard is
     /// returned.
     #[inline]
-    pub fn try_write(&self) -> Option<WriteGuard> {
+    pub fn try_write(&self) -> Option<RWLockWriteGuard> {
         if unsafe { self.inner.try_write() } {
-            Some(WriteGuard::new(&*self.inner))
+            Some(RWLockWriteGuard::new(&*self.inner))
         } else {
             None
         }
@@ -157,9 +157,9 @@ impl StaticRWLock {
     /// Returns an RAII guard which will release this thread's shared access
     /// once it is dropped.
     #[inline]
-    pub fn read(&'static self) -> ReadGuard {
+    pub fn read(&'static self) -> RWLockReadGuard {
         unsafe { self.inner.read() }
-        ReadGuard::new(&self.inner)
+        RWLockReadGuard::new(&self.inner)
     }
 
     /// Attempt to acquire this lock with shared read access.
@@ -169,9 +169,9 @@ impl StaticRWLock {
     /// release the shared access of this thread when dropped, or `None` if the
     /// access could not be granted.
     #[inline]
-    pub fn try_read(&'static self) -> Option<ReadGuard> {
+    pub fn try_read(&'static self) -> Option<RWLockReadGuard> {
         if unsafe { self.inner.try_read() } {
-            Some(ReadGuard::new(&self.inner))
+            Some(RWLockReadGuard::new(&self.inner))
         } else {
             None
         }
@@ -186,9 +186,9 @@ impl StaticRWLock {
     /// Returns an RAII guard which will drop the write access of this rwlock
     /// when dropped.
     #[inline]
-    pub fn write(&'static self) -> WriteGuard {
+    pub fn write(&'static self) -> RWLockWriteGuard {
         unsafe { self.inner.write() }
-        WriteGuard::new(&self.inner)
+        RWLockWriteGuard::new(&self.inner)
     }
 
     /// Attempt to lock this rwlock with exclusive write access.
@@ -197,9 +197,9 @@ impl StaticRWLock {
     /// to `write` would otherwise block. If successful, an RAII guard is
     /// returned.
     #[inline]
-    pub fn try_write(&'static self) -> Option<WriteGuard> {
+    pub fn try_write(&'static self) -> Option<RWLockWriteGuard> {
         if unsafe { self.inner.try_write() } {
-            Some(WriteGuard::new(&self.inner))
+            Some(RWLockWriteGuard::new(&self.inner))
         } else {
             None
         }
@@ -216,26 +216,26 @@ impl StaticRWLock {
     }
 }
 
-impl<'rwlock> ReadGuard<'rwlock> {
-    fn new<'a>(lock: &'a sys::RWLock) -> ReadGuard<'a> {
-        ReadGuard { lock: lock, marker: marker::NoSend }
+impl<'rwlock> RWLockReadGuard<'rwlock> {
+    fn new<'a>(lock: &'a sys::RWLock) -> RWLockReadGuard<'a> {
+        RWLockReadGuard { lock: lock, marker: marker::NoSend }
     }
 }
-impl<'rwlock> WriteGuard<'rwlock> {
-    fn new<'a>(lock: &'a sys::RWLock) -> WriteGuard<'a> {
-        WriteGuard { lock: lock, marker: marker::NoSend }
+impl<'rwlock> RWLockWriteGuard<'rwlock> {
+    fn new<'a>(lock: &'a sys::RWLock) -> RWLockWriteGuard<'a> {
+        RWLockWriteGuard { lock: lock, marker: marker::NoSend }
     }
 }
 
 #[unsafe_destructor]
-impl<'rwlock> Drop for ReadGuard<'rwlock> {
+impl<'rwlock> Drop for RWLockReadGuard<'rwlock> {
     fn drop(&mut self) {
         unsafe { self.lock.read_unlock(); }
     }
 }
 
 #[unsafe_destructor]
-impl<'rwlock> Drop for WriteGuard<'rwlock> {
+impl<'rwlock> Drop for RWLockWriteGuard<'rwlock> {
     fn drop(&mut self) {
         unsafe { self.lock.write_unlock(); }
     }
