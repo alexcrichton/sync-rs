@@ -1,123 +1,119 @@
+#![allow(non_camel_case_types)]
 
-use alloc::heap;
-use core::atomic;
-use core::ptr;
-use core::ptr::RawPtr;
-use libc::{HANDLE, BOOL, LPSECURITY_ATTRIBUTES, c_void, DWORD, LPCSTR};
+use std::cell::UnsafeCell;
+use std::os;
+use std::sync::atomic;
+use std::time::Duration;
+use alloc::{mod, heap};
+
+use libc::{BOOL, c_void, DWORD};
 use libc;
 
 type LPCRITICAL_SECTION = *mut c_void;
+type LPCONDITION_VARIABLE = *mut CONDITION_VARIABLE;
+
 const SPIN_COUNT: DWORD = 4000;
+
 #[cfg(target_arch = "x86")]
-const CRIT_SECTION_SIZE: uint = 24;
+const CRITICAL_SECTION_SIZE: uint = 24;
 #[cfg(target_arch = "x86_64")]
-const CRIT_SECTION_SIZE: uint = 40;
+const CRITICAL_SECTION_SIZE: uint = 40;
 
-pub struct Mutex {
-    // pointers for the lock/cond handles, atomically updated
-    lock: atomic::AtomicUint,
-    cond: atomic::AtomicUint,
-}
+#[repr(C)]
+struct CONDITION_VARIABLE { ptr: libc::LPVOID }
 
-pub const MUTEX_INIT: Mutex = Mutex {
-    lock: atomic::INIT_ATOMIC_UINT,
-    cond: atomic::INIT_ATOMIC_UINT,
+pub struct Mutex { inner: atomic::AtomicUint }
+
+pub struct Condvar { inner: UnsafeCell<CONDITION_VARIABLE> }
+
+pub const MUTEX_INIT: Mutex = Mutex { inner: atomic::INIT_ATOMIC_UINT };
+
+pub const CONDVAR_INIT: Condvar = Condvar {
+    inner: UnsafeCell { value: CONDITION_VARIABLE { ptr: 0 as *mut _ } }
 };
 
 impl Mutex {
     pub unsafe fn new() -> Mutex {
-        Mutex {
-            lock: atomic::AtomicUint::new(init_lock()),
-            cond: atomic::AtomicUint::new(init_cond()),
-        }
+        Mutex { inner: atomic::AtomicUint::new(init_lock() as uint) }
     }
     pub unsafe fn lock(&self) {
-        EnterCriticalSection(self.getlock() as LPCRITICAL_SECTION)
+        EnterCriticalSection(self.get())
     }
     pub unsafe fn trylock(&self) -> bool {
-        TryEnterCriticalSection(self.getlock() as LPCRITICAL_SECTION) != 0
+        TryEnterCriticalSection(self.get()) != 0
     }
     pub unsafe fn unlock(&self) {
-        LeaveCriticalSection(self.getlock() as LPCRITICAL_SECTION)
+        LeaveCriticalSection(self.get())
     }
-
-    pub unsafe fn wait(&self) {
-        self.unlock();
-        WaitForSingleObject(self.getcond() as HANDLE, libc::INFINITE);
-        self.lock();
-    }
-
-    pub unsafe fn signal(&self) {
-        assert!(SetEvent(self.getcond() as HANDLE) != 0);
-    }
-
-    /// This function is especially unsafe because there are no guarantees made
-    /// that no other thread is currently holding the lock or waiting on the
-    /// condition variable contained inside.
     pub unsafe fn destroy(&self) {
-        let lock = self.lock.swap(0, atomic::SeqCst);
-        let cond = self.cond.swap(0, atomic::SeqCst);
-        if lock != 0 { free_lock(lock) }
-        if cond != 0 { free_cond(cond) }
+        let lock = self.inner.swap(0, atomic::SeqCst);
+        if lock != 0 { free_lock(lock as LPCRITICAL_SECTION) }
     }
 
-    unsafe fn getlock(&self) -> *mut c_void {
-        match self.lock.load(atomic::SeqCst) {
+    unsafe fn get(&self) -> LPCRITICAL_SECTION {
+        match self.inner.load(atomic::SeqCst) {
             0 => {}
-            n => return n as *mut c_void
+            n => return n as LPCRITICAL_SECTION
         }
         let lock = init_lock();
-        match self.lock.compare_and_swap(0, lock, atomic::SeqCst) {
-            0 => return lock as *mut c_void,
+        match self.inner.compare_and_swap(0, lock as uint, atomic::SeqCst) {
+            0 => return lock as LPCRITICAL_SECTION,
             _ => {}
         }
         free_lock(lock);
-        return self.lock.load(atomic::SeqCst) as *mut c_void;
-    }
-
-    unsafe fn getcond(&self) -> *mut c_void {
-        match self.cond.load(atomic::SeqCst) {
-            0 => {}
-            n => return n as *mut c_void
-        }
-        let cond = init_cond();
-        match self.cond.compare_and_swap(0, cond, atomic::SeqCst) {
-            0 => return cond as *mut c_void,
-            _ => {}
-        }
-        free_cond(cond);
-        return self.cond.load(atomic::SeqCst) as *mut c_void;
+        return self.inner.load(atomic::SeqCst) as LPCRITICAL_SECTION;
     }
 }
 
-pub unsafe fn init_lock() -> uint {
-    let block = heap::allocate(CRIT_SECTION_SIZE, 8) as *mut c_void;
-    if block.is_null() { ::alloc::oom() }
+impl Condvar {
+    pub unsafe fn new() -> Condvar { CONDVAR_INIT }
+
+    pub unsafe fn wait(&self, mutex: &Mutex) {
+        let r = SleepConditionVariableCS(self.inner.get(),
+                                         mutex.get(),
+                                         libc::INFINITE);
+        debug_assert!(r != 0);
+    }
+
+    pub unsafe fn wait_timeout(&self, mutex: &Mutex, dur: Duration) -> bool {
+        let r = SleepConditionVariableCS(self.inner.get(),
+                                         mutex.get(),
+                                         dur.num_milliseconds() as DWORD);
+        if r == 0 {
+            const ERROR_TIMEOUT: DWORD = 0x5B4;
+            debug_assert_eq!(os::errno() as uint, ERROR_TIMEOUT as uint);
+            false
+        } else {
+            true
+        }
+    }
+
+    pub unsafe fn signal(&self) {
+        WakeConditionVariable(self.inner.get())
+    }
+
+    pub unsafe fn broadcast(&self) {
+        WakeAllConditionVariable(self.inner.get())
+    }
+
+    pub unsafe fn destroy(&self) {
+        // ...
+    }
+}
+
+unsafe fn init_lock() -> LPCRITICAL_SECTION {
+    let block = heap::allocate(CRITICAL_SECTION_SIZE, 8) as LPCRITICAL_SECTION;
+    if block.is_null() { alloc::oom() }
     InitializeCriticalSectionAndSpinCount(block, SPIN_COUNT);
-    return block as uint;
+    return block;
 }
 
-pub unsafe fn init_cond() -> uint {
-    return CreateEventA(ptr::null_mut(), libc::FALSE, libc::FALSE,
-                        ptr::null()) as uint;
+unsafe fn free_lock(h: LPCRITICAL_SECTION) {
+    DeleteCriticalSection(h);
+    heap::deallocate(h as *mut _, CRITICAL_SECTION_SIZE, 8);
 }
 
-pub unsafe fn free_lock(h: uint) {
-    DeleteCriticalSection(h as LPCRITICAL_SECTION);
-    heap::deallocate(h as *mut u8, CRIT_SECTION_SIZE, 8);
-}
-
-pub unsafe fn free_cond(h: uint) {
-    let block = h as HANDLE;
-    libc::CloseHandle(block);
-}
-
-#[allow(non_snake_case)]
 extern "system" {
-    fn CreateEventA(lpSecurityAttributes: LPSECURITY_ATTRIBUTES,
-                    bManualReset: BOOL,
-                    bInitialState: BOOL,
-                    lpName: LPCSTR) -> HANDLE;
     fn InitializeCriticalSectionAndSpinCount(
                     lpCriticalSection: LPCRITICAL_SECTION,
                     dwSpinCount: DWORD) -> BOOL;
@@ -125,6 +121,10 @@ extern "system" {
     fn EnterCriticalSection(lpCriticalSection: LPCRITICAL_SECTION);
     fn LeaveCriticalSection(lpCriticalSection: LPCRITICAL_SECTION);
     fn TryEnterCriticalSection(lpCriticalSection: LPCRITICAL_SECTION) -> BOOL;
-    fn SetEvent(hEvent: HANDLE) -> BOOL;
-    fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+
+    fn SleepConditionVariableCS(ConditionVariable: LPCONDITION_VARIABLE,
+                                CriticalSection: LPCRITICAL_SECTION,
+                                dwMilliseconds: DWORD) -> BOOL;
+    fn WakeConditionVariable(ConditionVariable: LPCONDITION_VARIABLE);
+    fn WakeAllConditionVariable(ConditionVariable: LPCONDITION_VARIABLE);
 }
