@@ -4,19 +4,71 @@ use std::time::Duration;
 use mutex;
 use sys;
 
+/// A Condition Variable
+///
+/// Condition variables represent the ability to block a thread such that it
+/// consumes no CPU time while waiting for an event to occur. Condition
+/// variables are typically associated with a boolean predicate (a condition)
+/// and a mutex. The predicate is always verified inside of the mutex before
+/// determining that thread must block.
+///
+/// Functions in this module will block the current **thread** of execution and
+/// are bindings to system-provided condition variables where possible. Note
+/// that this module places one additional restriction over the system condition
+/// variables: each condvar can be used with precisely one mutex at runtime. Any
+/// attempt to use multiple mutexes on the same condition variable will result
+/// in a runtime panic. If this is not desired, then the unsafe primitives in
+/// `sys` do not have this restriction.
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use sync::{Mutex, Condvar};
+///
+/// let pair = Arc::new((Mutex::new(), Condvar::new()));
+/// let pair2 = pair.clone();
+///
+/// // Inside of our lock, spawn a new thread, and then wait for it to start
+/// let &(ref lock, ref cvar) = &*pair;
+/// let g = lock.lock();
+/// spawn(proc() {
+///     let &(ref lock, ref cvar) = &*pair2;
+///     let _g = lock.lock();
+///     cvar.signal();
+/// });
+///
+/// // wait for the thred to start up
+/// cvar.wait(&g);
+/// ```
 pub struct Condvar { inner: Box<StaticCondvar> }
 
+/// Statically allocated condition variables.
+///
+/// This structure is identical to `Condvar` except that it is suitable for use
+/// in static initializers for other structures.
+///
+/// # Example
+///
+/// ```
+/// use sync::{StaticCondvar, CONDVAR_INIT};
+///
+/// static CVAR: StaticCondvar = CONDVAR_INIT;
+/// ```
 pub struct StaticCondvar {
     inner: sys::Condvar,
     mutex: AtomicUint,
 }
 
+/// Constant initializer for a statically allocated condition variable.
 pub const CONDVAR_INIT: StaticCondvar = StaticCondvar {
     inner: sys::CONDVAR_INIT,
     mutex: atomic::INIT_ATOMIC_UINT,
 };
 
 impl Condvar {
+    /// Creates a new condition variable which is ready to be waited on and
+    /// signaled.
     pub fn new() -> Condvar {
         Condvar {
             inner: box StaticCondvar {
@@ -26,6 +78,25 @@ impl Condvar {
         }
     }
 
+    /// Block the current thread until this condition variable receives a
+    /// signal.
+    ///
+    /// This function will atomically unlock the mutex specified (represented by
+    /// `guard`) and block the current thread. This means that any calls to
+    /// `signal()` which happen logically after the mutex is unlocked are
+    /// candidates to wake this thread up.
+    ///
+    /// Note that this function is susceptible to spurious wakeups. Condition
+    /// variables normally have a boolean predicate associated with them, and
+    /// the predicate must always be checked each time this function returns to
+    /// protect against spurious wakeups.
+    ///
+    /// # Panics
+    ///
+    /// This function will `panic!()` if it is used with more than one mutex
+    /// over time. Each condition variable is dynamically bound to exactly one
+    /// mutex to ensure defined behavior across platforms. If this functionality
+    /// is not desired, then unsafe primitives in `sys` are provided.
     pub fn wait(&self, guard: &mutex::Guard) {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
@@ -33,6 +104,13 @@ impl Condvar {
         }
     }
 
+    /// Wait on this condition variable for a signal, timing out after a
+    /// specified duration.
+    ///
+    /// The semantics of this function are equivalent to `wait()` except that
+    /// the thread will be blocked for no longer than `dur`. If the wait timed
+    /// out, then `false` will be returned. Otherwise if a signal was received
+    /// then `true` will be returned.
     pub fn wait_timeout(&self, guard: &mutex::Guard,
                                dur: Duration) -> bool {
         unsafe {
@@ -41,8 +119,21 @@ impl Condvar {
         }
     }
 
+    /// Wake up one blocked thread on this condvar.
+    ///
+    /// If there is a blocked thread on this condition variable, then it will be
+    /// woken up from its call to `wait` or `wait_timeout`. Calls to `signal`
+    /// are not buffered in any way.
+    ///
+    /// To wake up all threads, see `broadcast()`.
     pub fn signal(&self) { unsafe { self.inner.inner.signal() } }
 
+    /// Wake up all blocked threads on this condvar.
+    ///
+    /// This method will ensure that any current waiters on the condition
+    /// variable are awoken. Calls to `broadcast()` are not buffered in any way.
+    ///
+    /// To wake up only one thread, see `signal()`.
     pub fn broadcast(&self) { unsafe { self.inner.inner.broadcast() } }
 }
 
@@ -53,6 +144,25 @@ impl Drop for Condvar {
 }
 
 impl StaticCondvar {
+    /// Block the current thread until this condition variable receives a
+    /// signal.
+    ///
+    /// This function will atomically unlock the mutex specified (represented by
+    /// `guard`) and block the current thread. This means that any calls to
+    /// `signal()` which happen logically after the mutex is unlocked are
+    /// candidates to wake this thread up.
+    ///
+    /// Note that this function is susceptible to spurious wakeups. Condition
+    /// variables normally have a boolean predicate associated with them, and
+    /// the predicate must always be checked each time this function returns to
+    /// protect against spurious wakeups.
+    ///
+    /// # Panics
+    ///
+    /// This function will `panic!()` if it is used with more than one mutex
+    /// over time. Each condition variable is dynamically bound to exactly one
+    /// mutex to ensure defined behavior across platforms. If this functionality
+    /// is not desired, then unsafe primitives in `sys` are provided.
     pub fn wait(&'static self, guard: &mutex::Guard) {
         unsafe {
             self.verify(guard);
@@ -60,18 +170,43 @@ impl StaticCondvar {
         }
     }
 
-    pub fn wait_timeout(&self, guard: &mutex::Guard,
-                               dur: Duration) -> bool {
+    /// Wait on this condition variable for a signal, timing out after a
+    /// specified duration.
+    ///
+    /// The semantics of this function are equivalent to `wait()` except that
+    /// the thread will be blocked for no longer than `dur`. If the wait timed
+    /// out, then `false` will be returned. Otherwise if a signal was received
+    /// then `true` will be returned.
+    pub fn wait_timeout(&self, guard: &mutex::Guard, dur: Duration) -> bool {
         unsafe {
             self.verify(guard);
             self.inner.wait_timeout(mutex::guard_inner(guard), dur)
         }
     }
 
+    /// Wake up one blocked thread on this condvar.
+    ///
+    /// If there is a blocked thread on this condition variable, then it will be
+    /// woken up from its call to `wait` or `wait_timeout`. Calls to `signal`
+    /// are not buffered in any way.
+    ///
+    /// To wake up all threads, see `broadcast()`.
     pub fn signal(&'static self) { unsafe { self.inner.signal() } }
 
+    /// Wake up all blocked threads on this condvar.
+    ///
+    /// This method will ensure that any current waiters on the condition
+    /// variable are awoken. Calls to `broadcast()` are not buffered in any way.
+    ///
+    /// To wake up only one thread, see `signal()`.
     pub fn broadcast(&'static self) { unsafe { self.inner.broadcast() } }
 
+    /// Deallocate all resources associated with this static condvar.
+    ///
+    /// This method is unsafe to call as there is no guarantee that there are no
+    /// active users of the condvar, and this also doesn't prevent any future
+    /// users of the condvar. This method is required to be called to not leak
+    /// memory on all platforms.
     pub unsafe fn destroy(&'static self) {
         self.inner.destroy()
     }

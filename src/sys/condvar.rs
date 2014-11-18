@@ -2,18 +2,57 @@ use std::time::Duration;
 
 use sys::{mutex, Mutex};
 
+/// An OS-based condition variable.
+///
+/// This structure is the lowest layer possible on top of the OS-provided
+/// condition variables. It is consequently entirely unsafe to use. It is
+/// recommended to use the safer types at the top level of this crate instead of
+/// this type.
 pub struct Condvar(imp::Condvar);
 
+/// Static initializer for condition variables.
 pub const CONDVAR_INIT: Condvar = Condvar(imp::CONDVAR_INIT);
 
 impl Condvar {
+    /// Creates a new condition variable for use.
+    ///
+    /// Behavior is undefined if the condition variable is moved after it is
+    /// first used with any of the functions below.
+    #[inline]
     pub unsafe fn new() -> Condvar { Condvar(imp::Condvar::new()) }
+
+    /// Signal one waiter on this condition variable to wake up.
+    #[inline]
     pub unsafe fn signal(&self) { self.0.signal() }
+
+    /// Awaken all current waiters on this condition variable.
+    #[inline]
     pub unsafe fn broadcast(&self) { self.0.broadcast() }
+
+    /// Wait for a signal on the specified mutex.
+    ///
+    /// Behavior is undefined if the mutex is not locked by the current thread.
+    /// Behavior is also undefined if more than one mutex is used concurrently
+    /// on this condition variable.
+    #[inline]
     pub unsafe fn wait(&self, mutex: &Mutex) { self.0.wait(mutex::raw(mutex)) }
+
+    /// Wait for a signal on the specified mutex with a timeout duration
+    /// specified by `dur` (a relative time into the future).
+    ///
+    /// Behavior is undefined if the mutex is not locked by the current thread.
+    /// Behavior is also undefined if more than one mutex is used concurrently
+    /// on this condition variable.
+    #[inline]
     pub unsafe fn wait_timeout(&self, mutex: &Mutex, dur: Duration) -> bool {
         self.0.wait_timeout(mutex::raw(mutex), dur)
     }
+
+    /// Deallocate all resources associated with this condition variable.
+    ///
+    /// Behavior is undefined if there are current or will be future users of
+    /// this condition variable.
+    #[inline]
     pub unsafe fn destroy(&self) { self.0.destroy() }
 }
 
@@ -32,23 +71,31 @@ mod imp {
     };
 
     impl Condvar {
+        #[inline]
         pub unsafe fn new() -> Condvar {
             // Might be moved and address is changing it is better to avoid
             // initialization of potentially opaque OS data before it landed
             Condvar { inner: UnsafeCell::new(ffi::PTHREAD_COND_INITIALIZER) }
         }
+
+        #[inline]
         pub unsafe fn signal(&self) {
             let r = ffi::pthread_cond_signal(self.inner.get());
             debug_assert_eq!(r, 0);
         }
+
+        #[inline]
         pub unsafe fn broadcast(&self) {
             let r = ffi::pthread_cond_broadcast(self.inner.get());
             debug_assert_eq!(r, 0);
         }
+
+        #[inline]
         pub unsafe fn wait(&self, mutex: *mut ffi::pthread_mutex_t) {
             let r = ffi::pthread_cond_wait(self.inner.get(), mutex);
             debug_assert_eq!(r, 0);
         }
+
         pub unsafe fn wait_timeout(&self, mutex: *mut ffi::pthread_mutex_t,
                                    dur: Duration) -> bool {
             assert!(dur >= Duration::nanoseconds(0));
@@ -78,6 +125,8 @@ mod imp {
                 true
             }
         }
+
+        #[inline]
         pub unsafe fn destroy(&self) {
             let r = ffi::pthread_cond_destroy(self.inner.get());
             debug_assert_eq!(r, 0);
@@ -102,8 +151,10 @@ mod imp {
     };
 
     impl Condvar {
+        #[inline]
         pub unsafe fn new() -> Condvar { CONDVAR_INIT }
 
+        #[inline]
         pub unsafe fn wait(&self, mutex: ffi::LPCRITICAL_SECTION) {
             let r = ffi::SleepConditionVariableCS(self.inner.get(),
                                                   mutex,
@@ -125,10 +176,12 @@ mod imp {
             }
         }
 
+        #[inline]
         pub unsafe fn signal(&self) {
             ffi::WakeConditionVariable(self.inner.get())
         }
 
+        #[inline]
         pub unsafe fn broadcast(&self) {
             ffi::WakeAllConditionVariable(self.inner.get())
         }
