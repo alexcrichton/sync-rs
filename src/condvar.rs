@@ -1,49 +1,71 @@
+use std::sync::atomic::{mod, AtomicUint};
 use std::time::Duration;
 
 use mutex;
 use sys;
 
-pub struct Condvar { inner: Box<sys::Condvar> }
+pub struct Condvar { inner: Box<StaticCondvar> }
 
-pub struct StaticCondvar { inner: sys::Condvar }
+pub struct StaticCondvar {
+    inner: sys::Condvar,
+    mutex: AtomicUint,
+}
 
 pub const CONDVAR_INIT: StaticCondvar = StaticCondvar {
-    inner: sys::CONDVAR_INIT
+    inner: sys::CONDVAR_INIT,
+    mutex: atomic::INIT_ATOMIC_UINT,
 };
 
 impl Condvar {
     pub fn new() -> Condvar {
-        Condvar { inner: box unsafe { sys::Condvar::new() } }
+        Condvar {
+            inner: box StaticCondvar {
+                inner: unsafe { sys::Condvar::new() },
+                mutex: AtomicUint::new(0),
+            }
+        }
     }
 
-    pub unsafe fn wait(&self, guard: &mutex::Guard) {
-        self.inner.wait(mutex::guard_inner(guard))
+    pub fn wait(&self, guard: &mutex::Guard) {
+        unsafe {
+            let me: &'static Condvar = &*(self as *const _);
+            me.inner.wait(guard)
+        }
     }
 
-    pub unsafe fn wait_timeout(&self, guard: &mutex::Guard,
+    pub fn wait_timeout(&self, guard: &mutex::Guard,
                                dur: Duration) -> bool {
-        self.inner.wait_timeout(mutex::guard_inner(guard), dur)
+        unsafe {
+            let me: &'static Condvar = &*(self as *const _);
+            me.inner.wait_timeout(guard, dur)
+        }
     }
 
-    pub fn signal(&self) { unsafe { self.inner.signal() } }
+    pub fn signal(&self) { unsafe { self.inner.inner.signal() } }
 
-    pub fn broadcast(&self) { unsafe { self.inner.broadcast() } }
+    pub fn broadcast(&self) { unsafe { self.inner.inner.broadcast() } }
 }
 
 impl Drop for Condvar {
     fn drop(&mut self) {
-        unsafe { self.inner.destroy() }
+        unsafe { self.inner.inner.destroy() }
     }
 }
 
 impl StaticCondvar {
-    pub unsafe fn wait(&'static self, guard: &mutex::Guard) {
-        self.inner.wait(mutex::guard_inner(guard))
+    pub fn wait(&'static self, guard: &mutex::Guard) {
+        unsafe {
+            self.verify(guard);
+            self.inner.wait(mutex::guard_inner(guard))
+        }
     }
 
-    pub unsafe fn wait_timeout(&self, guard: &mutex::Guard,
+    pub fn wait_timeout(&self, guard: &mutex::Guard,
                                dur: Duration) -> bool {
-        self.inner.wait_timeout(mutex::guard_inner(guard), dur)
+        unsafe {
+            self.verify(guard);
+            self.inner.wait_timeout(mutex::guard_inner(guard), dur)
+        }
     }
 
     pub fn signal(&'static self) { unsafe { self.inner.signal() } }
@@ -52,6 +74,17 @@ impl StaticCondvar {
 
     pub unsafe fn destroy(&'static self) {
         self.inner.destroy()
+    }
+
+    fn verify(&self, guard: &mutex::Guard) {
+        let addr = guard as *const _ as uint;
+        if self.mutex.load(atomic::SeqCst) != addr {
+            match self.mutex.compare_and_swap(0, addr, atomic::SeqCst) {
+                0 => {}
+                _ => panic!("attempted to use a condition variable with two \
+                             mutexes"),
+            }
+        }
     }
 }
 
@@ -86,7 +119,7 @@ mod tests {
             let _g = M.lock();
             C.signal();
         });
-        unsafe { C.wait(&g); }
+        C.wait(&g);
         drop(g);
         unsafe { C.destroy(); M.destroy(); }
     }
@@ -101,7 +134,7 @@ mod tests {
             let _g = M.lock();
             C.broadcast();
         });
-        unsafe { C.wait(&g); }
+        C.wait(&g);
         drop(g);
         unsafe { C.destroy(); M.destroy(); }
     }
@@ -112,17 +145,33 @@ mod tests {
         static M: StaticMutex = MUTEX_INIT;
 
         let g = M.lock();
-        unsafe {
-            assert!(!C.wait_timeout(&g, Duration::nanoseconds(1000)));
-        }
+        assert!(!C.wait_timeout(&g, Duration::nanoseconds(1000)));
         spawn(proc() {
             let _g = M.lock();
             C.signal();
         });
-        unsafe {
-            assert!(C.wait_timeout(&g, Duration::days(1)));
-        }
+        assert!(C.wait_timeout(&g, Duration::days(1)));
         drop(g);
         unsafe { C.destroy(); M.destroy(); }
     }
+
+    #[test]
+    #[should_fail]
+    fn two_mutexes() {
+        static M1: StaticMutex = MUTEX_INIT;
+        static M2: StaticMutex = MUTEX_INIT;
+        static C: StaticCondvar = CONDVAR_INIT;
+
+        let g = M1.lock();
+        spawn(proc() {
+            let _g = M1.lock();
+            C.signal();
+        });
+        C.wait(&g);
+        drop(g);
+
+        C.wait(&M2.lock());
+
+    }
 }
+
