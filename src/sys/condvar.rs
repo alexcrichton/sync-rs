@@ -23,11 +23,11 @@ impl Condvar {
 
     /// Signal one waiter on this condition variable to wake up.
     #[inline]
-    pub unsafe fn signal(&self) { self.0.signal() }
+    pub unsafe fn notify_one(&self) { self.0.notify_one() }
 
     /// Awaken all current waiters on this condition variable.
     #[inline]
-    pub unsafe fn broadcast(&self) { self.0.broadcast() }
+    pub unsafe fn notify_all(&self) { self.0.notify_all() }
 
     /// Wait for a signal on the specified mutex.
     ///
@@ -79,13 +79,13 @@ mod imp {
         }
 
         #[inline]
-        pub unsafe fn signal(&self) {
+        pub unsafe fn notify_one(&self) {
             let r = ffi::pthread_cond_signal(self.inner.get());
             debug_assert_eq!(r, 0);
         }
 
         #[inline]
-        pub unsafe fn broadcast(&self) {
+        pub unsafe fn notify_all(&self) {
             let r = ffi::pthread_cond_broadcast(self.inner.get());
             debug_assert_eq!(r, 0);
         }
@@ -177,12 +177,12 @@ mod imp {
         }
 
         #[inline]
-        pub unsafe fn signal(&self) {
+        pub unsafe fn notify_one(&self) {
             ffi::WakeConditionVariable(self.inner.get())
         }
 
         #[inline]
-        pub unsafe fn broadcast(&self) {
+        pub unsafe fn notify_all(&self) {
             ffi::WakeAllConditionVariable(self.inner.get())
         }
 

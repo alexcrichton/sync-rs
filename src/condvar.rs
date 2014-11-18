@@ -35,7 +35,7 @@ use sys;
 /// spawn(proc() {
 ///     let &(ref lock, ref cvar) = &*pair2;
 ///     let _g = lock.lock();
-///     cvar.signal();
+///     cvar.notify_one();
 /// });
 ///
 /// // wait for the thred to start up
@@ -68,7 +68,7 @@ pub const CONDVAR_INIT: StaticCondvar = StaticCondvar {
 
 impl Condvar {
     /// Creates a new condition variable which is ready to be waited on and
-    /// signaled.
+    /// notified.
     pub fn new() -> Condvar {
         Condvar {
             inner: box StaticCondvar {
@@ -79,11 +79,11 @@ impl Condvar {
     }
 
     /// Block the current thread until this condition variable receives a
-    /// signal.
+    /// notification.
     ///
     /// This function will atomically unlock the mutex specified (represented by
     /// `guard`) and block the current thread. This means that any calls to
-    /// `signal()` which happen logically after the mutex is unlocked are
+    /// `notify_*()` which happen logically after the mutex is unlocked are
     /// candidates to wake this thread up.
     ///
     /// Note that this function is susceptible to spurious wakeups. Condition
@@ -104,13 +104,13 @@ impl Condvar {
         }
     }
 
-    /// Wait on this condition variable for a signal, timing out after a
+    /// Wait on this condition variable for a notification, timing out after a
     /// specified duration.
     ///
     /// The semantics of this function are equivalent to `wait()` except that
     /// the thread will be blocked for no longer than `dur`. If the wait timed
-    /// out, then `false` will be returned. Otherwise if a signal was received
-    /// then `true` will be returned.
+    /// out, then `false` will be returned. Otherwise if a notification was
+    /// received then `true` will be returned.
     pub fn wait_timeout(&self, guard: &mutex::Guard,
                                dur: Duration) -> bool {
         unsafe {
@@ -121,20 +121,20 @@ impl Condvar {
 
     /// Wake up one blocked thread on this condvar.
     ///
-    /// If there is a blocked thread on this condition variable, then it will be
-    /// woken up from its call to `wait` or `wait_timeout`. Calls to `signal`
-    /// are not buffered in any way.
+    /// If there is a blocked thread on this condition variable, then it will
+    /// be woken up from its call to `wait` or `wait_timeout`. Calls to
+    /// `notify_one` are not buffered in any way.
     ///
-    /// To wake up all threads, see `broadcast()`.
-    pub fn signal(&self) { unsafe { self.inner.inner.signal() } }
+    /// To wake up all threads, see `notify_one()`.
+    pub fn notify_one(&self) { unsafe { self.inner.inner.notify_one() } }
 
     /// Wake up all blocked threads on this condvar.
     ///
     /// This method will ensure that any current waiters on the condition
-    /// variable are awoken. Calls to `broadcast()` are not buffered in any way.
+    /// variable are awoken. Calls to `notify_all()` are not buffered in any way.
     ///
-    /// To wake up only one thread, see `signal()`.
-    pub fn broadcast(&self) { unsafe { self.inner.inner.broadcast() } }
+    /// To wake up only one thread, see `notify_one()`.
+    pub fn notify_all(&self) { unsafe { self.inner.inner.notify_all() } }
 }
 
 impl Drop for Condvar {
@@ -145,11 +145,11 @@ impl Drop for Condvar {
 
 impl StaticCondvar {
     /// Block the current thread until this condition variable receives a
-    /// signal.
+    /// notification.
     ///
     /// This function will atomically unlock the mutex specified (represented by
     /// `guard`) and block the current thread. This means that any calls to
-    /// `signal()` which happen logically after the mutex is unlocked are
+    /// `notify_one()` which happen logically after the mutex is unlocked are
     /// candidates to wake this thread up.
     ///
     /// Note that this function is susceptible to spurious wakeups. Condition
@@ -170,13 +170,13 @@ impl StaticCondvar {
         }
     }
 
-    /// Wait on this condition variable for a signal, timing out after a
+    /// Wait on this condition variable for a notification, timing out after a
     /// specified duration.
     ///
     /// The semantics of this function are equivalent to `wait()` except that
     /// the thread will be blocked for no longer than `dur`. If the wait timed
-    /// out, then `false` will be returned. Otherwise if a signal was received
-    /// then `true` will be returned.
+    /// out, then `false` will be returned. Otherwise if a notification was
+    /// received then `true` will be returned.
     pub fn wait_timeout(&self, guard: &mutex::Guard, dur: Duration) -> bool {
         unsafe {
             self.verify(guard);
@@ -186,20 +186,20 @@ impl StaticCondvar {
 
     /// Wake up one blocked thread on this condvar.
     ///
-    /// If there is a blocked thread on this condition variable, then it will be
-    /// woken up from its call to `wait` or `wait_timeout`. Calls to `signal`
-    /// are not buffered in any way.
+    /// If there is a blocked thread on this condition variable, then it will
+    /// be woken up from its call to `wait` or `wait_timeout`. Calls to
+    /// `notify_one` are not buffered in any way.
     ///
-    /// To wake up all threads, see `broadcast()`.
-    pub fn signal(&'static self) { unsafe { self.inner.signal() } }
+    /// To wake up all threads, see `notify_all()`.
+    pub fn notify_one(&'static self) { unsafe { self.inner.notify_one() } }
 
     /// Wake up all blocked threads on this condvar.
     ///
     /// This method will ensure that any current waiters on the condition
-    /// variable are awoken. Calls to `broadcast()` are not buffered in any way.
+    /// variable are awoken. Calls to `notify_all()` are not buffered in any way.
     ///
-    /// To wake up only one thread, see `signal()`.
-    pub fn broadcast(&'static self) { unsafe { self.inner.broadcast() } }
+    /// To wake up only one thread, see `notify_one()`.
+    pub fn notify_all(&'static self) { unsafe { self.inner.notify_all() } }
 
     /// Deallocate all resources associated with this static condvar.
     ///
@@ -232,27 +232,27 @@ mod tests {
     #[test]
     fn smoke() {
         let c = Condvar::new();
-        c.signal();
-        c.broadcast();
+        c.notify_one();
+        c.notify_all();
     }
 
     #[test]
     fn static_smoke() {
         static C: StaticCondvar = CONDVAR_INIT;
-        C.signal();
-        C.broadcast();
+        C.notify_one();
+        C.notify_all();
         unsafe { C.destroy(); }
     }
 
     #[test]
-    fn signal() {
+    fn notify_one() {
         static C: StaticCondvar = CONDVAR_INIT;
         static M: StaticMutex = MUTEX_INIT;
 
         let g = M.lock();
         spawn(proc() {
             let _g = M.lock();
-            C.signal();
+            C.notify_one();
         });
         C.wait(&g);
         drop(g);
@@ -260,14 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn broadcast() {
+    fn notify_all() {
         static C: StaticCondvar = CONDVAR_INIT;
         static M: StaticMutex = MUTEX_INIT;
 
         let g = M.lock();
         spawn(proc() {
             let _g = M.lock();
-            C.broadcast();
+            C.notify_all();
         });
         C.wait(&g);
         drop(g);
@@ -283,7 +283,7 @@ mod tests {
         assert!(!C.wait_timeout(&g, Duration::nanoseconds(1000)));
         spawn(proc() {
             let _g = M.lock();
-            C.signal();
+            C.notify_one();
         });
         assert!(C.wait_timeout(&g, Duration::days(1)));
         drop(g);
@@ -300,7 +300,7 @@ mod tests {
         let g = M1.lock();
         spawn(proc() {
             let _g = M1.lock();
-            C.signal();
+            C.notify_one();
         });
         C.wait(&g);
         drop(g);
