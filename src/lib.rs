@@ -1,4 +1,4 @@
-#![feature(unsafe_destructor)]
+#![feature(unsafe_destructor, tuple_indexing)]
 
 extern crate libc;
 extern crate alloc;
@@ -8,8 +8,7 @@ pub use mutex::Guard as MutexGuard;
 
 pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT};
 
-#[cfg(unix)] #[path = "unix.rs"] pub mod sys;
-#[cfg(windows)] #[path = "windows.rs"] pub mod sys;
+pub mod sys;
 
 mod mutex;
 mod condvar;
