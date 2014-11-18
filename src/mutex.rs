@@ -78,7 +78,7 @@ impl Mutex {
     /// the mutex. Upon returning, the task is the only task with the mutex
     /// held. An RAII guard is returned to allow scoped unlock of the lock. When
     /// the guard goes out of scope, the mutex will be unlocked.
-    pub fn lock<'a>(&'a self) -> Guard<'a> {
+    pub fn lock(&self) -> Guard {
         unsafe { self.lock.lock() }
         Guard::new(&*self.lock)
     }
@@ -91,7 +91,7 @@ impl Mutex {
     ///
     /// This function does not block.
     pub fn try_lock<'a>(&'a self) -> Option<Guard<'a>> {
-        if unsafe { self.lock.trylock() } {
+        if unsafe { self.lock.try_lock() } {
             Some(Guard::new(&*self.lock))
         } else {
             None
@@ -117,7 +117,7 @@ impl StaticMutex {
 
     /// Attempts to grab this lock, see `Mutex::try_lock`
     pub fn try_lock(&'static self) -> Option<Guard<'static>> {
-        if unsafe { self.lock.trylock() } {
+        if unsafe { self.lock.try_lock() } {
             Some(Guard::new(&self.lock))
         } else {
             None
@@ -210,7 +210,7 @@ mod test {
     }
 
     #[test]
-    fn trylock() {
+    fn try_lock() {
         let m = Mutex::new();
         assert!(m.try_lock().is_some());
     }

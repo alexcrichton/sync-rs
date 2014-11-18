@@ -7,8 +7,8 @@ pub const MUTEX_INIT: Mutex = Mutex(imp::MUTEX_INIT);
 impl Mutex {
     pub unsafe fn new() -> Mutex { Mutex(imp::Mutex::new()) }
     pub unsafe fn lock(&self) { self.0.lock() }
+    pub unsafe fn try_lock(&self) -> bool { self.0.try_lock() }
     pub unsafe fn unlock(&self) { self.0.unlock() }
-    pub unsafe fn trylock(&self) -> bool { self.0.trylock() }
     pub unsafe fn destroy(&self) { self.0.destroy() }
 }
 
@@ -41,7 +41,7 @@ mod imp {
             let r = ffi::pthread_mutex_unlock(self.inner.get());
             debug_assert_eq!(r, 0);
         }
-        pub unsafe fn trylock(&self) -> bool {
+        pub unsafe fn try_lock(&self) -> bool {
             ffi::pthread_mutex_trylock(self.inner.get()) == 0
         }
         pub unsafe fn destroy(&self) {
@@ -76,7 +76,7 @@ mod imp {
         pub unsafe fn lock(&self) {
             ffi::EnterCriticalSection(self.get())
         }
-        pub unsafe fn trylock(&self) -> bool {
+        pub unsafe fn try_lock(&self) -> bool {
             ffi::TryEnterCriticalSection(self.get()) != 0
         }
         pub unsafe fn unlock(&self) {

@@ -98,7 +98,7 @@ mod imp {
     pub struct Condvar { inner: UnsafeCell<ffi::CONDITION_VARIABLE> }
 
     pub const CONDVAR_INIT: Condvar = Condvar {
-        inner: UnsafeCell { value: ffi::CONDITION_VARIABLE { ptr: 0 as *mut _ } }
+        inner: UnsafeCell { value: ffi::CONDITION_VARIABLE_INIT }
     };
 
     impl Condvar {
