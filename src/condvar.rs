@@ -159,22 +159,7 @@ impl StaticCondvar {
     /// Block the current thread until this condition variable receives a
     /// notification.
     ///
-    /// This function will atomically unlock the mutex specified (represented by
-    /// `guard`) and block the current thread. This means that any calls to
-    /// `notify_one()` which happen logically after the mutex is unlocked are
-    /// candidates to wake this thread up.
-    ///
-    /// Note that this function is susceptible to spurious wakeups. Condition
-    /// variables normally have a boolean predicate associated with them, and
-    /// the predicate must always be checked each time this function returns to
-    /// protect against spurious wakeups.
-    ///
-    /// # Panics
-    ///
-    /// This function will `panic!()` if it is used with more than one mutex
-    /// over time. Each condition variable is dynamically bound to exactly one
-    /// mutex to ensure defined behavior across platforms. If this functionality
-    /// is not desired, then unsafe primitives in `sys` are provided.
+    /// See `Condvar::wait`.
     pub fn wait<T: AsMutexGuard>(&'static self, mutex_guard: &T) {
         unsafe {
             let lock = mutex_guard.as_mutex_guard();
@@ -188,10 +173,7 @@ impl StaticCondvar {
     /// Wait on this condition variable for a notification, timing out after a
     /// specified duration.
     ///
-    /// The semantics of this function are equivalent to `wait()` except that
-    /// the thread will be blocked for no longer than `dur`. If the wait timed
-    /// out, then `false` will be returned. Otherwise if a notification was
-    /// received then `true` will be returned.
+    /// See `Condvar::wait_timeout`.
     pub fn wait_timeout<T: AsMutexGuard>(&self, mutex_guard: &T,
                                          dur: Duration) -> bool {
         unsafe {
@@ -206,19 +188,12 @@ impl StaticCondvar {
 
     /// Wake up one blocked thread on this condvar.
     ///
-    /// If there is a blocked thread on this condition variable, then it will
-    /// be woken up from its call to `wait` or `wait_timeout`. Calls to
-    /// `notify_one` are not buffered in any way.
-    ///
-    /// To wake up all threads, see `notify_all()`.
+    /// See `Condvar::notify_one`.
     pub fn notify_one(&'static self) { unsafe { self.inner.notify_one() } }
 
     /// Wake up all blocked threads on this condvar.
     ///
-    /// This method will ensure that any current waiters on the condition
-    /// variable are awoken. Calls to `notify_all()` are not buffered in any way.
-    ///
-    /// To wake up only one thread, see `notify_one()`.
+    /// See `Condvar::notify_all`.
     pub fn notify_all(&'static self) { unsafe { self.inner.notify_all() } }
 
     /// Deallocate all resources associated with this static condvar.
