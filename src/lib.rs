@@ -30,10 +30,12 @@ pub use rwlock::{RWLock, StaticRWLock, RWLOCK_INIT};
 pub use rwlock::{RWLockReadGuard, RWLockWriteGuard};
 pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsSysMutex};
 pub use one::{Once, ONCE_INIT};
+pub use semaphore::{Semaphore, SemaphoreGuard};
 
 pub mod sys;
-mod one;
 
-mod mutex;
 mod condvar;
+mod mutex;
+mod one;
 mod rwlock;
+mod semaphore;
