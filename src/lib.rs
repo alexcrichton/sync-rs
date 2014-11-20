@@ -55,6 +55,7 @@ pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsMutexGuard};
 pub use one::{Once, ONCE_INIT};
 pub use semaphore::{Semaphore, SemaphoreGuard};
 pub use barrier::Barrier;
+pub use std::sync::{Arc, Weak, TaskPool, Future, atomic};
 
 pub mod sys;
 
