@@ -31,6 +31,7 @@ pub use rwlock::{RWLockReadGuard, RWLockWriteGuard};
 pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsMutexGuard};
 pub use one::{Once, ONCE_INIT};
 pub use semaphore::{Semaphore, SemaphoreGuard};
+pub use barrier::Barrier;
 
 pub mod sys;
 
@@ -39,5 +40,6 @@ mod mutex;
 mod one;
 mod rwlock;
 mod semaphore;
+mod barrier;
 
 mod poison;
