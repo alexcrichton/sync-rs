@@ -1,8 +1,7 @@
 use std::cell::UnsafeCell;
 use std::kinds::marker;
-use std::task;
 
-use {sys, AsSysMutex};
+use {sys, poison, AsMutexGuard};
 
 /// A mutual exclusion primitive useful for protecting shared data
 ///
@@ -40,8 +39,7 @@ pub struct Mutex<T> {
     // mutex type can be safely moved at any time, so to ensure that the native
     // mutex is used correctly we box the inner lock to give it a constant
     // address.
-    lock: Box<sys::Mutex>,
-    failed: UnsafeCell<bool>,
+    inner: Box<StaticMutex>,
     data: UnsafeCell<T>,
 }
 
@@ -68,6 +66,7 @@ pub struct Mutex<T> {
 /// ```
 pub struct StaticMutex {
     lock: sys::Mutex,
+    poison: UnsafeCell<poison::Flag>,
 }
 
 /// An RAII implementation of a "scoped lock" of a mutex. When this structure is
@@ -77,8 +76,10 @@ pub struct StaticMutex {
 /// Deref and DerefMut implementations
 #[must_use]
 pub struct MutexGuard<'a, T: 'a> {
+    // funny underscores due to how Deref/DerefMut currently work (they
+    // disregard field privacy).
     __lock: &'a Mutex<T>,
-    __marker: marker::NoSend,
+    __guard: StaticMutexGuard,
 }
 
 /// An RAII implementation of a "scoped lock" of a static mutex. When this
@@ -87,18 +88,21 @@ pub struct MutexGuard<'a, T: 'a> {
 pub struct StaticMutexGuard {
     lock: &'static sys::Mutex,
     marker: marker::NoSend,
+    poison: poison::Guard<'static>,
 }
 
 /// Static initialization of a mutex. This constant can be used to initialize
 /// other mutex constants.
-pub const MUTEX_INIT: StaticMutex = StaticMutex { lock: sys::MUTEX_INIT };
+pub const MUTEX_INIT: StaticMutex = StaticMutex {
+    lock: sys::MUTEX_INIT,
+    poison: UnsafeCell { value: poison::Flag { failed: false } },
+};
 
 impl<T: Send> Mutex<T> {
     /// Creates a new mutex in an unlocked state ready for use.
     pub fn new(t: T) -> Mutex<T> {
         Mutex {
-            lock: box unsafe { sys::Mutex::new() },
-            failed: UnsafeCell::new(false),
+            inner: box MUTEX_INIT,
             data: UnsafeCell::new(t),
         }
     }
@@ -115,8 +119,10 @@ impl<T: Send> Mutex<T> {
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will immediately panic once the mutex is acquired.
     pub fn lock(&self) -> MutexGuard<T> {
-        unsafe { self.lock.lock() }
-        MutexGuard::new(self)
+        unsafe {
+            let lock: &'static StaticMutex = &*(&*self.inner as *const _);
+            MutexGuard::new(self, lock.lock())
+        }
     }
 
     /// Attempts to acquire this lock.
@@ -133,10 +139,11 @@ impl<T: Send> Mutex<T> {
     /// this call will immediately panic if the mutex would otherwise be
     /// acquired.
     pub fn try_lock(&self) -> Option<MutexGuard<T>> {
-        if unsafe { self.lock.try_lock() } {
-            Some(MutexGuard::new(self))
-        } else {
-            None
+        unsafe {
+            let lock: &'static StaticMutex = &*(&*self.inner as *const _);
+            lock.try_lock().map(|guard| {
+                MutexGuard::new(self, guard)
+            })
         }
     }
 }
@@ -147,7 +154,7 @@ impl<T: Send> Drop for Mutex<T> {
         // This is actually safe b/c we know that there is no further usage of
         // this mutex (it's up to the user to arrange for a mutex to get
         // dropped, that's not our job)
-        unsafe { self.lock.destroy() }
+        unsafe { self.inner.lock.destroy() }
     }
 }
 
@@ -155,13 +162,13 @@ impl StaticMutex {
     /// Acquires this lock, see `Mutex::lock`
     pub fn lock(&'static self) -> StaticMutexGuard {
         unsafe { self.lock.lock() }
-        StaticMutexGuard::new(&self.lock)
+        StaticMutexGuard::new(self)
     }
 
     /// Attempts to grab this lock, see `Mutex::try_lock`
     pub fn try_lock(&'static self) -> Option<StaticMutexGuard> {
         if unsafe { self.lock.try_lock() } {
-            Some(StaticMutexGuard::new(&self.lock))
+            Some(StaticMutexGuard::new(self))
         } else {
             None
         }
@@ -183,19 +190,13 @@ impl StaticMutex {
 }
 
 impl<'mutex, T> MutexGuard<'mutex, T> {
-    fn new(lock: &Mutex<T>) -> MutexGuard<T> {
-        let guard = MutexGuard { __lock: lock, __marker: marker::NoSend };
-        unsafe {
-            if *lock.failed.get() {
-                panic!("poisoned mutex - another task failed inside!");
-            }
-        }
-        return guard;
+    fn new(lock: &Mutex<T>, guard: StaticMutexGuard) -> MutexGuard<T> {
+        MutexGuard { __lock: lock, __guard: guard }
     }
 }
 
-impl<'mutex, T> AsSysMutex for MutexGuard<'mutex, T> {
-    fn as_sys_mutex(&self) -> &sys::Mutex { &*self.__lock.lock }
+impl<'mutex, T> AsMutexGuard for MutexGuard<'mutex, T> {
+    unsafe fn as_mutex_guard(&self) -> &StaticMutexGuard { &self.__guard }
 }
 
 impl<'mutex, T> Deref<T> for MutexGuard<'mutex, T> {
@@ -207,38 +208,44 @@ impl<'mutex, T> DerefMut<T> for MutexGuard<'mutex, T> {
     }
 }
 
-#[unsafe_destructor]
-impl<'mutex, T> Drop for MutexGuard<'mutex, T> {
-    fn drop(&mut self) {
+impl StaticMutexGuard {
+    fn new(lock: &'static StaticMutex) -> StaticMutexGuard {
         unsafe {
-            if !*self.__lock.failed.get() && task::failing() {
-                *self.__lock.failed.get() = true;
-            }
-            self.__lock.lock.unlock();
+            let guard = StaticMutexGuard {
+                lock: &lock.lock,
+                marker: marker::NoSend,
+                poison: (*lock.poison.get()).borrow(),
+            };
+            guard.poison.check("mutex");
+            return guard;
         }
     }
 }
 
-impl StaticMutexGuard {
-    fn new(lock: &'static sys::Mutex) -> StaticMutexGuard {
-        StaticMutexGuard { lock: lock, marker: marker::NoSend }
-    }
+pub fn guard_lock(guard: &StaticMutexGuard) -> &sys::Mutex { guard.lock }
+pub fn guard_poison(guard: &StaticMutexGuard) -> &poison::Guard {
+    &guard.poison
 }
 
-impl AsSysMutex for StaticMutexGuard {
-    fn as_sys_mutex(&self) -> &sys::Mutex { self.lock }
+impl AsMutexGuard for StaticMutexGuard {
+    unsafe fn as_mutex_guard(&self) -> &StaticMutexGuard { self }
 }
 
 #[unsafe_destructor]
 impl Drop for StaticMutexGuard {
     fn drop(&mut self) {
-        unsafe { self.lock.unlock(); }
+        unsafe {
+            self.poison.done();
+            self.lock.unlock();
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Mutex, StaticMutex, MUTEX_INIT};
+    use std::sync::Arc;
+    use std::task;
+    use {Mutex, StaticMutex, MUTEX_INIT, Condvar};
 
     #[test]
     fn smoke() {
@@ -295,6 +302,102 @@ mod test {
     fn try_lock() {
         let m = Mutex::new(());
         assert!(m.try_lock().is_some());
+    }
+
+    #[test]
+    fn test_mutex_arc_condvar() {
+        let arc = Arc::new((Mutex::new(false), Condvar::new()));
+        let arc2 = arc.clone();
+        let (tx, rx) = channel();
+        spawn(proc() {
+            // wait until parent gets in
+            rx.recv();
+            let &(ref lock, ref cvar) = &*arc2;
+            let mut lock = lock.lock();
+            *lock = true;
+            cvar.notify_one();
+        });
+
+        let &(ref lock, ref cvar) = &*arc;
+        let lock = lock.lock();
+        tx.send(());
+        assert!(!*lock);
+        while !*lock {
+            cvar.wait(&lock);
+        }
+    }
+
+    #[test]
+    #[should_fail]
+    fn test_arc_condvar_poison() {
+        let arc = Arc::new((Mutex::new(1i), Condvar::new()));
+        let arc2 = arc.clone();
+        let (tx, rx) = channel();
+
+        spawn(proc() {
+            rx.recv();
+            let &(ref lock, ref cvar) = &*arc2;
+            let _g = lock.lock();
+            cvar.notify_one();
+            // Parent should fail when it wakes up.
+            panic!();
+        });
+
+        let &(ref lock, ref cvar) = &*arc;
+        let lock = lock.lock();
+        tx.send(());
+        while *lock == 1 {
+            cvar.wait(&lock);
+        }
+    }
+
+    #[test]
+    #[should_fail]
+    fn test_mutex_arc_poison() {
+        let arc = Arc::new(Mutex::new(1i));
+        let arc2 = arc.clone();
+        let _ = task::try(proc() {
+            let lock = arc2.lock();
+            assert_eq!(*lock, 2);
+        });
+        let lock = arc.lock();
+        assert_eq!(*lock, 1);
+    }
+
+    #[test]
+    fn test_mutex_arc_nested() {
+        // Tests nested mutexes and access
+        // to underlying data.
+        let arc = Arc::new(Mutex::new(1i));
+        let arc2 = Arc::new(Mutex::new(arc));
+        let (tx, rx) = channel();
+        spawn(proc() {
+            let lock = arc2.lock();
+            let lock2 = lock.deref().lock();
+            assert_eq!(*lock2, 1);
+            tx.send(());
+        });
+        rx.recv();
+    }
+
+    #[test]
+    fn test_mutex_arc_access_in_unwind() {
+        let arc = Arc::new(Mutex::new(1i));
+        let arc2 = arc.clone();
+        let _ = task::try::<()>(proc() {
+            struct Unwinder {
+                i: Arc<Mutex<int>>,
+            }
+            impl Drop for Unwinder {
+                fn drop(&mut self) {
+                    *self.i.lock() += 1;
+                }
+            }
+            let _u = Unwinder { i: arc2 };
+            panic!();
+        });
+        let lock = arc.lock();
+        assert_eq!(*lock, 2);
     }
 }
 

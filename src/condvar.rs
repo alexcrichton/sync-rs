@@ -1,7 +1,7 @@
 use std::sync::atomic::{mod, AtomicUint};
 use std::time::Duration;
 
-use sys;
+use {sys, mutex, StaticMutexGuard};
 
 /// A Condition Variable
 ///
@@ -70,9 +70,12 @@ pub const CONDVAR_INIT: StaticCondvar = StaticCondvar {
 
 /// A trait for vaules which can be passed to the waiting methods of condition
 /// variables. This is implemented by the mutex guards in this module.
-pub trait AsSysMutex {
-    /// Returns the inner `sys::Mutex` which should be waited on.
-    fn as_sys_mutex(&self) -> &sys::Mutex;
+///
+/// Note that this trait should likely not be implemented manually unless you
+/// really know what you're doing.
+pub trait AsMutexGuard {
+    #[allow(missing_docs)]
+    unsafe fn as_mutex_guard(&self) -> &StaticMutexGuard;
 }
 
 impl Condvar {
@@ -106,7 +109,7 @@ impl Condvar {
     /// over time. Each condition variable is dynamically bound to exactly one
     /// mutex to ensure defined behavior across platforms. If this functionality
     /// is not desired, then unsafe primitives in `sys` are provided.
-    pub fn wait<T: AsSysMutex>(&self, mutex_guard: &T) {
+    pub fn wait<T: AsMutexGuard>(&self, mutex_guard: &T) {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
             me.inner.wait(mutex_guard)
@@ -120,7 +123,7 @@ impl Condvar {
     /// the thread will be blocked for no longer than `dur`. If the wait timed
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
-    pub fn wait_timeout<T: AsSysMutex>(&self, mutex_guard: &T,
+    pub fn wait_timeout<T: AsMutexGuard>(&self, mutex_guard: &T,
                                        dur: Duration) -> bool {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
@@ -172,11 +175,13 @@ impl StaticCondvar {
     /// over time. Each condition variable is dynamically bound to exactly one
     /// mutex to ensure defined behavior across platforms. If this functionality
     /// is not desired, then unsafe primitives in `sys` are provided.
-    pub fn wait<T: AsSysMutex>(&'static self, mutex_guard: &T) {
-        let lock = mutex_guard.as_sys_mutex();
+    pub fn wait<T: AsMutexGuard>(&'static self, mutex_guard: &T) {
         unsafe {
-            self.verify(lock);
-            self.inner.wait(lock);
+            let lock = mutex_guard.as_mutex_guard();
+            let sys = mutex::guard_lock(lock);
+            self.verify(sys);
+            self.inner.wait(sys);
+            (*mutex::guard_poison(lock)).check("mutex");
         }
     }
 
@@ -187,12 +192,15 @@ impl StaticCondvar {
     /// the thread will be blocked for no longer than `dur`. If the wait timed
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
-    pub fn wait_timeout<T: AsSysMutex>(&self, mutex_guard: &T,
-                                       dur: Duration) -> bool {
-        let lock = mutex_guard.as_sys_mutex();
+    pub fn wait_timeout<T: AsMutexGuard>(&self, mutex_guard: &T,
+                                         dur: Duration) -> bool {
         unsafe {
-            self.verify(lock);
-            self.inner.wait_timeout(lock, dur)
+            let lock = mutex_guard.as_mutex_guard();
+            let sys = mutex::guard_lock(lock);
+            self.verify(sys);
+            let ret = self.inner.wait_timeout(sys, dur);
+            (*mutex::guard_poison(lock)).check("mutex");
+            return ret;
         }
     }
 
