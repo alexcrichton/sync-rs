@@ -124,7 +124,7 @@ impl Condvar {
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
     pub fn wait_timeout<T: AsMutexGuard>(&self, mutex_guard: &T,
-                                       dur: Duration) -> bool {
+                                         dur: Duration) -> bool {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
             me.inner.wait_timeout(mutex_guard, dur)
