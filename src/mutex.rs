@@ -1,24 +1,38 @@
+use std::cell::UnsafeCell;
 use std::kinds::marker;
+use std::task;
 
-use sys;
+use {sys, AsSysMutex};
 
 /// A mutual exclusion primitive useful for protecting shared data
 ///
 /// This mutex will properly block tasks waiting for the lock to become
 /// available. The mutex can also be statically initialized or created via a
-/// `new` constructor.
+/// `new` constructor. Each mutex has a type parameter which represents the data
+/// that it is protecting. The data can only be accessed through the RAII guards
+/// returned from `lock` and `try_lock`.
+///
+/// # Poisoning
+///
+/// In order to prevent access to otherwise invalid data, each mutex will
+/// propagate any panics which occur while the lock is held. Once a thread has
+/// panicked while holding the lock, then all other threads will immediately
+/// panic as well once they hold the lock.
 ///
 /// # Example
 ///
 /// ```rust
 /// use sync::Mutex;
 ///
-/// let m = Mutex::new();
+/// let m = Mutex::new(4u);
 /// let guard = m.lock();
+///
 /// // do some work
+/// println!("the value is: {}", *guard);
+///
 /// drop(guard); // unlock the lock
 /// ```
-pub struct Mutex {
+pub struct Mutex<T> {
     // Note that this static mutex is in a *box*, not inlined into the struct
     // itself. This is done for memory safety reasons with the usage of a
     // StaticNativeMutex inside the static mutex above. Once a native mutex has
@@ -27,6 +41,8 @@ pub struct Mutex {
     // mutex is used correctly we box the inner lock to give it a constant
     // address.
     lock: Box<sys::Mutex>,
+    failed: UnsafeCell<bool>,
+    data: UnsafeCell<T>,
 }
 
 /// The static mutex type is provided to allow for static allocation of mutexes.
@@ -56,9 +72,20 @@ pub struct StaticMutex {
 
 /// An RAII implementation of a "scoped lock" of a mutex. When this structure is
 /// dropped (falls out of scope), the lock will be unlocked.
+///
+/// The data protected by the mutex can be access through this guard via its
+/// Deref and DerefMut implementations
 #[must_use]
-pub struct MutexGuard<'a> {
-    lock: &'a sys::Mutex,
+pub struct MutexGuard<'a, T: 'a> {
+    __lock: &'a Mutex<T>,
+    __marker: marker::NoSend,
+}
+
+/// An RAII implementation of a "scoped lock" of a static mutex. When this
+/// structure is dropped (falls out of scope), the lock will be unlocked.
+#[must_use]
+pub struct StaticMutexGuard {
+    lock: &'static sys::Mutex,
     marker: marker::NoSend,
 }
 
@@ -66,10 +93,14 @@ pub struct MutexGuard<'a> {
 /// other mutex constants.
 pub const MUTEX_INIT: StaticMutex = StaticMutex { lock: sys::MUTEX_INIT };
 
-impl Mutex {
+impl<T: Send> Mutex<T> {
     /// Creates a new mutex in an unlocked state ready for use.
-    pub fn new() -> Mutex {
-        Mutex { lock: box unsafe { sys::Mutex::new() } }
+    pub fn new(t: T) -> Mutex<T> {
+        Mutex {
+            lock: box unsafe { sys::Mutex::new() },
+            failed: UnsafeCell::new(false),
+            data: UnsafeCell::new(t),
+        }
     }
 
     /// Acquires a mutex, blocking the current task until it is able to do so.
@@ -78,9 +109,14 @@ impl Mutex {
     /// the mutex. Upon returning, the task is the only task with the mutex
     /// held. An RAII guard is returned to allow scoped unlock of the lock. When
     /// the guard goes out of scope, the mutex will be unlocked.
-    pub fn lock(&self) -> MutexGuard {
+    ///
+    /// # Panics
+    ///
+    /// If another user of this mutex panicked while holding the mutex, then
+    /// this call will immediately panic once the mutex is acquired.
+    pub fn lock(&self) -> MutexGuard<T> {
         unsafe { self.lock.lock() }
-        MutexGuard::new(&*self.lock)
+        MutexGuard::new(self)
     }
 
     /// Attempts to acquire this lock.
@@ -90,16 +126,23 @@ impl Mutex {
     /// guard is dropped.
     ///
     /// This function does not block.
-    pub fn try_lock<'a>(&'a self) -> Option<MutexGuard<'a>> {
+    ///
+    /// # Panics
+    ///
+    /// If another user of this mutex panicked while holding the mutex, then
+    /// this call will immediately panic if the mutex would otherwise be
+    /// acquired.
+    pub fn try_lock(&self) -> Option<MutexGuard<T>> {
         if unsafe { self.lock.try_lock() } {
-            Some(MutexGuard::new(&*self.lock))
+            Some(MutexGuard::new(self))
         } else {
             None
         }
     }
 }
 
-impl Drop for Mutex {
+#[unsafe_destructor]
+impl<T: Send> Drop for Mutex<T> {
     fn drop(&mut self) {
         // This is actually safe b/c we know that there is no further usage of
         // this mutex (it's up to the user to arrange for a mutex to get
@@ -110,15 +153,15 @@ impl Drop for Mutex {
 
 impl StaticMutex {
     /// Acquires this lock, see `Mutex::lock`
-    pub fn lock(&'static self) -> MutexGuard<'static> {
+    pub fn lock(&'static self) -> StaticMutexGuard {
         unsafe { self.lock.lock() }
-        MutexGuard::new(&self.lock)
+        StaticMutexGuard::new(&self.lock)
     }
 
     /// Attempts to grab this lock, see `Mutex::try_lock`
-    pub fn try_lock(&'static self) -> Option<MutexGuard<'static>> {
+    pub fn try_lock(&'static self) -> Option<StaticMutexGuard> {
         if unsafe { self.lock.try_lock() } {
-            Some(MutexGuard::new(&self.lock))
+            Some(StaticMutexGuard::new(&self.lock))
         } else {
             None
         }
@@ -139,16 +182,55 @@ impl StaticMutex {
     }
 }
 
-pub fn guard_inner<'a>(guard: &MutexGuard<'a>) -> &'a sys::Mutex { guard.lock }
+impl<'mutex, T> MutexGuard<'mutex, T> {
+    fn new(lock: &Mutex<T>) -> MutexGuard<T> {
+        let guard = MutexGuard { __lock: lock, __marker: marker::NoSend };
+        unsafe {
+            if *lock.failed.get() {
+                panic!("poisoned mutex - another task failed inside!");
+            }
+        }
+        return guard;
+    }
+}
 
-impl<'mutex> MutexGuard<'mutex> {
-    fn new<'a>(lock: &'a sys::Mutex) -> MutexGuard<'a> {
-        MutexGuard { lock: lock, marker: marker::NoSend }
+impl<'mutex, T> AsSysMutex for MutexGuard<'mutex, T> {
+    fn as_sys_mutex(&self) -> &sys::Mutex { &*self.__lock.lock }
+}
+
+impl<'mutex, T> Deref<T> for MutexGuard<'mutex, T> {
+    fn deref<'a>(&'a self) -> &'a T { unsafe { &*self.__lock.data.get() } }
+}
+impl<'mutex, T> DerefMut<T> for MutexGuard<'mutex, T> {
+    fn deref_mut<'a>(&'a mut self) -> &'a mut T {
+        unsafe { &mut *self.__lock.data.get() }
     }
 }
 
 #[unsafe_destructor]
-impl<'mutex> Drop for MutexGuard<'mutex> {
+impl<'mutex, T> Drop for MutexGuard<'mutex, T> {
+    fn drop(&mut self) {
+        unsafe {
+            if !*self.__lock.failed.get() && task::failing() {
+                *self.__lock.failed.get() = true;
+            }
+            self.__lock.lock.unlock();
+        }
+    }
+}
+
+impl StaticMutexGuard {
+    fn new(lock: &'static sys::Mutex) -> StaticMutexGuard {
+        StaticMutexGuard { lock: lock, marker: marker::NoSend }
+    }
+}
+
+impl AsSysMutex for StaticMutexGuard {
+    fn as_sys_mutex(&self) -> &sys::Mutex { self.lock }
+}
+
+#[unsafe_destructor]
+impl Drop for StaticMutexGuard {
     fn drop(&mut self) {
         unsafe { self.lock.unlock(); }
     }
@@ -160,7 +242,7 @@ mod test {
 
     #[test]
     fn smoke() {
-        let m = Mutex::new();
+        let m = Mutex::new(());
         drop(m.lock());
         drop(m.lock());
     }
@@ -211,7 +293,7 @@ mod test {
 
     #[test]
     fn try_lock() {
-        let m = Mutex::new();
+        let m = Mutex::new(());
         assert!(m.try_lock().is_some());
     }
 }

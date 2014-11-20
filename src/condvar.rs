@@ -1,7 +1,7 @@
 use std::sync::atomic::{mod, AtomicUint};
 use std::time::Duration;
 
-use {sys, mutex, MutexGuard};
+use sys;
 
 /// A Condition Variable
 ///
@@ -25,20 +25,23 @@ use {sys, mutex, MutexGuard};
 /// use std::sync::Arc;
 /// use sync::{Mutex, Condvar};
 ///
-/// let pair = Arc::new((Mutex::new(), Condvar::new()));
+/// let pair = Arc::new((Mutex::new(false), Condvar::new()));
 /// let pair2 = pair.clone();
 ///
 /// // Inside of our lock, spawn a new thread, and then wait for it to start
-/// let &(ref lock, ref cvar) = &*pair;
-/// let g = lock.lock();
 /// spawn(proc() {
 ///     let &(ref lock, ref cvar) = &*pair2;
-///     let _g = lock.lock();
+///     let mut started = lock.lock();
+///     *started = true;
 ///     cvar.notify_one();
 /// });
 ///
-/// // wait for the thred to start up
-/// cvar.wait(&g);
+/// // wait for the thread to start up
+/// let &(ref lock, ref cvar) = &*pair;
+/// let started = lock.lock();
+/// while !*started {
+///     cvar.wait(&started);
+/// }
 /// ```
 pub struct Condvar { inner: Box<StaticCondvar> }
 
@@ -64,6 +67,13 @@ pub const CONDVAR_INIT: StaticCondvar = StaticCondvar {
     inner: sys::CONDVAR_INIT,
     mutex: atomic::INIT_ATOMIC_UINT,
 };
+
+/// A trait for vaules which can be passed to the waiting methods of condition
+/// variables. This is implemented by the mutex guards in this module.
+pub trait AsSysMutex {
+    /// Returns the inner `sys::Mutex` which should be waited on.
+    fn as_sys_mutex(&self) -> &sys::Mutex;
+}
 
 impl Condvar {
     /// Creates a new condition variable which is ready to be waited on and
@@ -96,10 +106,10 @@ impl Condvar {
     /// over time. Each condition variable is dynamically bound to exactly one
     /// mutex to ensure defined behavior across platforms. If this functionality
     /// is not desired, then unsafe primitives in `sys` are provided.
-    pub fn wait(&self, guard: &MutexGuard) {
+    pub fn wait<T: AsSysMutex>(&self, mutex_guard: &T) {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
-            me.inner.wait(guard)
+            me.inner.wait(mutex_guard)
         }
     }
 
@@ -110,11 +120,11 @@ impl Condvar {
     /// the thread will be blocked for no longer than `dur`. If the wait timed
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
-    pub fn wait_timeout(&self, guard: &MutexGuard,
-                               dur: Duration) -> bool {
+    pub fn wait_timeout<T: AsSysMutex>(&self, mutex_guard: &T,
+                                       dur: Duration) -> bool {
         unsafe {
             let me: &'static Condvar = &*(self as *const _);
-            me.inner.wait_timeout(guard, dur)
+            me.inner.wait_timeout(mutex_guard, dur)
         }
     }
 
@@ -162,10 +172,11 @@ impl StaticCondvar {
     /// over time. Each condition variable is dynamically bound to exactly one
     /// mutex to ensure defined behavior across platforms. If this functionality
     /// is not desired, then unsafe primitives in `sys` are provided.
-    pub fn wait(&'static self, guard: &MutexGuard) {
+    pub fn wait<T: AsSysMutex>(&'static self, mutex_guard: &T) {
+        let lock = mutex_guard.as_sys_mutex();
         unsafe {
-            self.verify(guard);
-            self.inner.wait(mutex::guard_inner(guard))
+            self.verify(lock);
+            self.inner.wait(lock);
         }
     }
 
@@ -176,10 +187,12 @@ impl StaticCondvar {
     /// the thread will be blocked for no longer than `dur`. If the wait timed
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
-    pub fn wait_timeout(&self, guard: &MutexGuard, dur: Duration) -> bool {
+    pub fn wait_timeout<T: AsSysMutex>(&self, mutex_guard: &T,
+                                       dur: Duration) -> bool {
+        let lock = mutex_guard.as_sys_mutex();
         unsafe {
-            self.verify(guard);
-            self.inner.wait_timeout(mutex::guard_inner(guard), dur)
+            self.verify(lock);
+            self.inner.wait_timeout(lock, dur)
         }
     }
 
@@ -210,8 +223,8 @@ impl StaticCondvar {
         self.inner.destroy()
     }
 
-    fn verify(&self, guard: &MutexGuard) {
-        let addr = guard as *const _ as uint;
+    fn verify(&self, mutex: &sys::Mutex) {
+        let addr = mutex as *const _ as uint;
         if self.mutex.load(atomic::SeqCst) != addr {
             match self.mutex.compare_and_swap(0, addr, atomic::SeqCst) {
                 0 => {}

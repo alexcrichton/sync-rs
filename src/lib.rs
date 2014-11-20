@@ -25,10 +25,10 @@
 extern crate libc;
 extern crate alloc;
 
-pub use mutex::{Mutex, MutexGuard, StaticMutex, MUTEX_INIT};
+pub use mutex::{Mutex, MutexGuard, StaticMutex, StaticMutexGuard, MUTEX_INIT};
 pub use rwlock::{RWLock, StaticRWLock, RWLOCK_INIT};
 pub use rwlock::{RWLockReadGuard, RWLockWriteGuard};
-pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT};
+pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsSysMutex};
 pub use one::{Once, ONCE_INIT};
 
 pub mod sys;
