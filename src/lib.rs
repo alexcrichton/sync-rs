@@ -51,6 +51,7 @@ extern crate alloc;
 pub use mutex::{Mutex, MutexGuard, StaticMutex, StaticMutexGuard, MUTEX_INIT};
 pub use rwlock::{RWLock, StaticRWLock, RWLOCK_INIT};
 pub use rwlock::{RWLockReadGuard, RWLockWriteGuard};
+pub use rwlock::{StaticRWLockReadGuard, StaticRWLockWriteGuard};
 pub use condvar::{Condvar, StaticCondvar, CONDVAR_INIT, AsMutexGuard};
 pub use one::{Once, ONCE_INIT};
 pub use semaphore::{Semaphore, SemaphoreGuard};
