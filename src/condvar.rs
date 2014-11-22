@@ -96,7 +96,8 @@ impl Condvar {
     /// This function will atomically unlock the mutex specified (represented by
     /// `guard`) and block the current thread. This means that any calls to
     /// `notify_*()` which happen logically after the mutex is unlocked are
-    /// candidates to wake this thread up.
+    /// candidates to wake this thread up. When this function call returns, the
+    /// lock specified will have been re-acquired.
     ///
     /// Note that this function is susceptible to spurious wakeups. Condition
     /// variables normally have a boolean predicate associated with them, and
@@ -123,6 +124,9 @@ impl Condvar {
     /// the thread will be blocked for no longer than `dur`. If the wait timed
     /// out, then `false` will be returned. Otherwise if a notification was
     /// received then `true` will be returned.
+    ///
+    /// Like `wait`, the lock specified will be re-acquired when this function
+    /// returns, regardless of whether the timeout elapsed or not.
     pub fn wait_timeout<T: AsMutexGuard>(&self, mutex_guard: &T,
                                          dur: Duration) -> bool {
         unsafe {
