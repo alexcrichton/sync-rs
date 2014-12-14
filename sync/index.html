@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `sync` crate.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, sync">
+
+    <title>sync - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../main.css">
+
+    
+    
+</head>
+<body class="rustdoc">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <section class="sidebar">
+        
+        <p class='location'></p>
+    </section>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press 'S' to search, '?' for more options..."
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content mod">
+<h1 class='fqn'><span class='in-band'>Crate <a class='mod' href=''>sync</a><wbr></span><span class='out-of-band'><a href='stability.html'>[stability]</a> <span id='render-detail'>
+            <a id="collapse-all" href="#">[-]
+            </a>&nbsp;<a id="expand-all" href="#">[+]</a>
+        </span><a id='src-0' href='../src/sync/lib.rs.html#1-70'>[src]</a></span></h1>
+<div class='docblock'>
+<h1 id="sync-rs:-revamping-std::sync" class='section-header'><a
+                           href="#sync-rs:-revamping-std::sync">sync-rs: revamping std::sync</a></h1>
+<p>The purpose of this crate is to provide a prototype implementation of a
+revamp&#39;d std::sync API. It strives to maintain the high-level types while
+bringing their implementations much closer to the corresponding system
+primitives where available.</p>
+
+<h1 id="abstraction-layer" class='section-header'><a
+                           href="#abstraction-layer">Abstraction layer</a></h1>
+<p>The crate id structured into a two primary modes:</p>
+
+<ul>
+<li><p>The <code>sys</code> module contains 0-cost, very unsafe, raw bindings to the system
+primitives. The behavior of these primitives may vary slightly across
+platforms and are generally considered too unsafe to use. It is highly
+recommended to use the safe primitives at the top level instead.</p></li>
+<li><p>The crate root has a number of types exported which are all safe to use
+and provide alternatives to the <code>sys</code> module. These primitives all provide
+safety features such as poisoning and RAII guards. Types like <code>Mutex</code> and
+<code>RWLock</code> also provide the ability to contain the data they are protecting.</p></li>
+</ul>
+
+<h1 id="poisoning" class='section-header'><a
+                           href="#poisoning">Poisoning</a></h1>
+<p>The <code>Mutex</code> and <code>RWLock</code> types in this module implement a strategy referred
+to as poisoning in order to prevent access to possibly invalid data. If a
+thread panics with write-access to one of these two locks. then all future
+accesses to the lock will panic immediately.</p>
+
+<h1 id="static-initialization" class='section-header'><a
+                           href="#static-initialization">Static initialization</a></h1>
+<p>This crate supports a number of statically initialized primitives for use in
+setting up C libraries, for example. Types which are normally not statically
+initialized have a <code>Static</code>-prefix type to use (<code>StaticMutex</code>,
+<code>StaticCondvar</code>, <code>StaticRWLock</code>). A form of one-time initialization (<code>Once</code>)
+is also provided. All types have a <code>*_INIT</code> constant which may be used to
+initialize the primitive.</p>
+
+<h1 id="custom-primitives" class='section-header'><a
+                           href="#custom-primitives">Custom primitives</a></h1>
+<p>Using the system-provided mutexes, condition variables, and rwlocks, this
+crate also builds abstractions such as <code>Once</code>, <code>Semaphore</code>, and <code>Barrier</code>
+which do not bind to the corresponding system abstraction if one is
+available.</p>
+</div><h2 id='modules' class='section-header'><a href="#modules">Modules</a></h2>
+<table>
+                    <tr>
+                        <td><a class='stability Experimental' title='Experimental'></a><a class='mod' href='atomic/index.html'
+                               title='sync::atomic'>atomic</a></td>
+                        <td class='docblock short'><p>Atomic types</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='mod' href='sys/index.html'
+                               title='sync::sys'>sys</a></td>
+                        <td class='docblock short'><p>Bindings to system primitives</p>
+</td>
+                    </tr>
+                </table><h2 id='structs' class='section-header'><a href="#structs">Structs</a></h2>
+<table>
+                    <tr>
+                        <td><a class='stability Stable' title='Stable'></a><a class='struct' href='struct.Arc.html'
+                               title='sync::Arc'>Arc</a></td>
+                        <td class='docblock short'><p>An atomically reference counted wrapper for shared state.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.Barrier.html'
+                               title='sync::Barrier'>Barrier</a></td>
+                        <td class='docblock short'><p>A barrier enables multiple tasks to synchronize the beginning
+of some computation.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.Condvar.html'
+                               title='sync::Condvar'>Condvar</a></td>
+                        <td class='docblock short'><p>A Condition Variable</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Experimental' title='Experimental'></a><a class='struct' href='struct.Future.html'
+                               title='sync::Future'>Future</a></td>
+                        <td class='docblock short'><p>A type encapsulating the result of a computation which may not be complete</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.Mutex.html'
+                               title='sync::Mutex'>Mutex</a></td>
+                        <td class='docblock short'><p>A mutual exclusion primitive useful for protecting shared data</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.MutexGuard.html'
+                               title='sync::MutexGuard'>MutexGuard</a></td>
+                        <td class='docblock short'><p>An RAII implementation of a &quot;scoped lock&quot; of a mutex. When this structure is
+dropped (falls out of scope), the lock will be unlocked.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.Once.html'
+                               title='sync::Once'>Once</a></td>
+                        <td class='docblock short'><p>A synchronization primitive which can be used to run a one-time global
+initialization. Useful for one-time initialization for FFI or related
+functionality. This type can only be constructed with the <code>ONCE_INIT</code>
+value.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.RWLock.html'
+                               title='sync::RWLock'>RWLock</a></td>
+                        <td class='docblock short'><p>A reader-writer lock</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.RWLockReadGuard.html'
+                               title='sync::RWLockReadGuard'>RWLockReadGuard</a></td>
+                        <td class='docblock short'><p>RAII structure used to release the shared read access of a lock when
+dropped.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.RWLockWriteGuard.html'
+                               title='sync::RWLockWriteGuard'>RWLockWriteGuard</a></td>
+                        <td class='docblock short'><p>RAII structure used to release the exclusive write access of a lock when
+dropped.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.Semaphore.html'
+                               title='sync::Semaphore'>Semaphore</a></td>
+                        <td class='docblock short'><p>A counting, blocking, semaphore.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.SemaphoreGuard.html'
+                               title='sync::SemaphoreGuard'>SemaphoreGuard</a></td>
+                        <td class='docblock short'><p>An RAII guard which will release a resource acquired from a semaphore when
+dropped.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticCondvar.html'
+                               title='sync::StaticCondvar'>StaticCondvar</a></td>
+                        <td class='docblock short'><p>Statically allocated condition variables.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticMutex.html'
+                               title='sync::StaticMutex'>StaticMutex</a></td>
+                        <td class='docblock short'><p>The static mutex type is provided to allow for static allocation of mutexes.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticMutexGuard.html'
+                               title='sync::StaticMutexGuard'>StaticMutexGuard</a></td>
+                        <td class='docblock short'><p>An RAII implementation of a &quot;scoped lock&quot; of a static mutex. When this
+structure is dropped (falls out of scope), the lock will be unlocked.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticRWLock.html'
+                               title='sync::StaticRWLock'>StaticRWLock</a></td>
+                        <td class='docblock short'><p>Structure representing a staticaly allocated RWLock.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticRWLockReadGuard.html'
+                               title='sync::StaticRWLockReadGuard'>StaticRWLockReadGuard</a></td>
+                        <td class='docblock short'><p>RAII structure used to release the shared read access of a lock when
+dropped.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='struct' href='struct.StaticRWLockWriteGuard.html'
+                               title='sync::StaticRWLockWriteGuard'>StaticRWLockWriteGuard</a></td>
+                        <td class='docblock short'><p>RAII structure used to release the exclusive write access of a lock when
+dropped.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Experimental' title='Experimental'></a><a class='struct' href='struct.TaskPool.html'
+                               title='sync::TaskPool'>TaskPool</a></td>
+                        <td class='docblock short'><p>A task pool used to execute functions in parallel.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Experimental' title='Experimental: Weak pointers may not belong in this module.'></a><a class='struct' href='struct.Weak.html'
+                               title='sync::Weak'>Weak</a></td>
+                        <td class='docblock short'><p>A weak pointer to an <code>Arc</code>.</p>
+</td>
+                    </tr>
+                </table><h2 id='constants' class='section-header'><a href="#constants">Constants</a></h2>
+<table>
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='constant' href='constant.CONDVAR_INIT.html'
+                               title='sync::CONDVAR_INIT'>CONDVAR_INIT</a></td>
+                        <td class='docblock short'><p>Constant initializer for a statically allocated condition variable.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='constant' href='constant.MUTEX_INIT.html'
+                               title='sync::MUTEX_INIT'>MUTEX_INIT</a></td>
+                        <td class='docblock short'><p>Static initialization of a mutex. This constant can be used to initialize
+other mutex constants.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='constant' href='constant.ONCE_INIT.html'
+                               title='sync::ONCE_INIT'>ONCE_INIT</a></td>
+                        <td class='docblock short'><p>Initialization value for static <code>Once</code> values.</p>
+</td>
+                    </tr>
+                
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='constant' href='constant.RWLOCK_INIT.html'
+                               title='sync::RWLOCK_INIT'>RWLOCK_INIT</a></td>
+                        <td class='docblock short'><p>Constant initialization for a statically-initialized rwlock.</p>
+</td>
+                    </tr>
+                </table><h2 id='traits' class='section-header'><a href="#traits">Traits</a></h2>
+<table>
+                    <tr>
+                        <td><a class='stability Unmarked' title='No stability level'></a><a class='trait' href='trait.AsMutexGuard.html'
+                               title='sync::AsMutexGuard'>AsMutexGuard</a></td>
+                        <td class='docblock short'><p>A trait for vaules which can be passed to the waiting methods of condition
+variables. This is implemented by the mutex guards in this module.</p>
+</td>
+                    </tr>
+                </table></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <div id="help" class="hidden">
+        <div class="shortcuts">
+            <h1>Keyboard shortcuts</h1>
+            <dl>
+                <dt>?</dt>
+                <dd>Show this help dialog</dd>
+                <dt>S</dt>
+                <dd>Focus the search field</dd>
+                <dt>&larrb;</dt>
+                <dd>Move up in search results</dd>
+                <dt>&rarrb;</dt>
+                <dd>Move down in search results</dd>
+                <dt>&#9166;</dt>
+                <dd>Go to active search result</dd>
+            </dl>
+        </div>
+        <div class="infos">
+            <h1>Search tricks</h1>
+            <p>
+                Prefix searches with a type followed by a colon (e.g.
+                <code>fn:</code>) to restrict the search to a given type.
+            </p>
+            <p>
+                Accepted types are: <code>fn</code>, <code>mod</code>,
+                <code>struct</code>, <code>enum</code>,
+                <code>trait</code>, <code>typedef</code> (or
+                <code>tdef</code>).
+            </p>
+        </div>
+    </div>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "sync";
+        window.playgroundUrl = "";
+    </script>
+    <script src="../jquery.js"></script>
+    <script src="../main.js"></script>
+    
+    <script async src="../search-index.js"></script>
+</body>
+</html>
